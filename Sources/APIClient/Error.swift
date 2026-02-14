@@ -7,7 +7,7 @@ public enum APIClientError: Swift.Error, Sendable {
     case requestError(Swift.Error)
 
     /// An error related to network issues.
-    case networkError(URLError) // Swift.Error
+    case networkError(URLError)  // Swift.Error
 
     /// An error related to an invalid or unexpected HTTP response.
     case responseError(HTTPURLResponse, ErrorResponse?)
@@ -55,11 +55,11 @@ extension APIClientError: LocalizedError {
 
         return false
     }
-    
+
     /// A computed property to determine if an error is a not found error.
     public var isNotFoundError: Bool {
         if case .responseError(let res, _) = self {
-            return res.statusCode == 400
+            return res.statusCode == 404
         }
 
         return false
@@ -139,4 +139,3 @@ public enum InternalTransportError: LocalizedError, Sendable {
         }
     }
 }
-

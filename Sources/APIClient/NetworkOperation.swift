@@ -1,18 +1,19 @@
 import Foundation
-
-public typealias BaseUrlProvider = () -> URL?
+import Synchronization
 
 /// A class for managing network operations with retries and middleware.
 ///
 /// The `NetworkOperation` class represents a network operation that communicates
-/// with an endpoint, using an authentication mechanism, a transport layer, and a retry
-/// strategy.
+/// with an endpoint, using a transport layer and a retry strategy.
 class NetworkOperation: @unchecked Sendable {
 
-    public typealias Middleware = (@Sendable (inout URLRequest, Endpoint) async throws(APIClientError) -> Void)
+    public typealias Middleware = (@Sendable (inout URLRequest, any Endpoint) async throws(APIClientError) -> Void)
+
+    /// The configuration for building requests.
+    let configuration: Configuration
 
     /// The endpoint associated with the network operation.
-    private let endpoint: Endpoint
+    private let endpoint: any Endpoint
 
     /// Middleware to be applied to requests before they are sent.
     private let requestMiddleware: Middleware
@@ -23,68 +24,47 @@ class NetworkOperation: @unchecked Sendable {
     /// The strategy for retrying network operations.
     private let retryStrategy: RetryStrategy
 
-    /// An iterator to determine the delay between retries.
-    private let retryDelayIterator: AnyIterator<TimeInterval>
-
-    /// The current retry count for the operation.
-    private var retryCount: Int = 0
+    /// Mutable state protected by a Mutex for thread safety.
+    private let mutableState: Mutex<(retryCount: Int, delayIterator: AnyIterator<TimeInterval>)>
 
     /// Initializes a new instance of `NetworkOperation`.
     ///
     /// - Parameters:
-    ///   - baseURL: The base URL for the network operation.
-    ///   - requestMiddleware: The `Middleware` instance for request middleware..
+    ///   - configuration: The client configuration for building requests.
+    ///   - requestMiddleware: The middleware closure for request modification.
     ///   - transport: The `HTTPTransport` instance for sending requests.
     ///   - endpoint: The `Endpoint` representing the endpoint to interact with.
     ///   - retryStrategy: The `RetryStrategy` for managing retries.
     init(
+        configuration: Configuration,
         requestMiddleware: @escaping Middleware,
         transport: HTTPTransport,
-        endpoint: Endpoint,
+        endpoint: any Endpoint,
         retryStrategy: RetryStrategy
     ) {
+        self.configuration = configuration
         self.requestMiddleware = requestMiddleware
         self.transport = transport
         self.endpoint = endpoint
         self.retryStrategy = retryStrategy
-        self.retryDelayIterator = retryStrategy.makeDelayIterator()
+        self.mutableState = Mutex((retryCount: 0, delayIterator: retryStrategy.makeDelayIterator()))
     }
 
-    /// Starts the network request, handling authorization and retries.
+    /// Starts the network request, handling retries.
     ///
-    /// - Throws: An error if the request fails, if there's a network error, or if
-    ///           the task is cancelled.
+    /// - Throws: An `APIClientError` if the request fails after all retries.
     /// - Returns: A `Response<Data>` representing the HTTP response.
     func startRequest() async throws(APIClientError) -> Response<Data> {
-        // Generate a unique id
-        let requestId = UUID().uuidString
-
         do {
-            // Form request
-            var request = try RequestBuilder()
-                .build(using: endpoint)
-            try await makeUpWithMiddleware(request: &request, endpoint: endpoint)
+            var request = try RequestBuilder(configuration: configuration)
+                .build(for: endpoint)
+            try await requestMiddleware(&request, endpoint)
 
-            // Log request
-            log(message: "⬆️ [\(requestId)] \(request.curlString)")
-
-            // Get data
             let response = try await proceedWithRequest(request)
-
-            // Log the data and return
-            let data = response.data
-            let responseBody = String(bytes: data, encoding: .utf8)
-            log(message: "⬇️ [\(requestId)] \(responseBody ?? "Empty response")")
-
             return response
         } catch {
-            log(message: "❌ [\(requestId)] Error: \(error.localizedDescription).")
             throw error
         }
-    }
-
-    private func makeUpWithMiddleware(request: inout URLRequest, endpoint: Endpoint) async throws(APIClientError) {
-        try await requestMiddleware(&request, endpoint)
     }
 
     internal func proceedWithRequest(_ urlRequest: URLRequest) async throws(APIClientError) -> Response<Data> {
@@ -99,11 +79,10 @@ class NetworkOperation: @unchecked Sendable {
                 apiError = (error as? URLError).map { .networkError($0) } ?? .transport(error)
             }
 
-            if case .networkError(URLError.cancelled) = apiError {
-                throw apiError
-            } else {
+            guard case .networkError(URLError.cancelled) = apiError else {
                 return try await retryRequest(with: apiError)
             }
+            throw apiError
         }
     }
 
@@ -118,61 +97,66 @@ class NetworkOperation: @unchecked Sendable {
     }
 
     private func retryRequest(with error: APIClientError) async throws(APIClientError) -> Response<Data> {
-        guard retryCount < retryStrategy.maxRetryCount else {
-            throw error
-        }
-
-        retryCount += 1
-
-        guard retryStrategy.retryInterval != .never else {
-            return try await startRequest()
-        }
-
-        guard let delay = retryDelayIterator.next() else {
-            throw error
-        }
-
-        do {
-            if #available(iOS 16.0, *) {
-                try await Task.sleep(for: .seconds(delay))
-            } else {
-                try await Task.sleep(nanoseconds: UInt64(delay) * NSEC_PER_SEC)
+        let retryInfo: (shouldRetry: Bool, delay: TimeInterval?) = mutableState.withLock { state in
+            guard state.retryCount < retryStrategy.maxRetryCount else {
+                return (false, nil)
             }
-        } catch {
-            throw APIClientError.aborted(error)
+            state.retryCount += 1
+
+            guard retryStrategy.retryInterval != .never else {
+                return (true, nil)
+            }
+
+            return (true, state.delayIterator.next())
+        }
+
+        guard retryInfo.shouldRetry else {
+            throw error
+        }
+
+        if let delay = retryInfo.delay {
+            do {
+                try await Task.sleep(for: .seconds(delay))
+            } catch {
+                throw APIClientError.aborted(error)
+            }
         }
 
         return try await startRequest()
     }
 }
 
-/// Represents a network operation specialized for uploading data asynchronously.
+/// Represents a network operation specialized for downloading data with progress tracking.
 final class UploadNetworkOperation: NetworkOperation, @unchecked Sendable {
 
-    private let progressHandler: ((Double) -> Void)
+    private let progressHandler: @Sendable (Double) -> Void
 
-    /// Initializes an upload network operation with necessary parameters.
+    /// Initializes a progress-tracking network operation.
     ///
     /// - Parameters:
-    ///   - baseURL: The base URL for the API endpoint.
+    ///   - configuration: The client configuration.
     ///   - requestMiddleware: Middlewares for modifying outgoing requests.
     ///   - transport: The HTTP transport responsible for sending requests.
-    ///   - endpoint: The endpoint to which the data will be uploaded.
+    ///   - endpoint: The endpoint for the request.
     ///   - retryStrategy: The strategy for retrying failed network requests.
-    ///   - progressHandler: Closure to handle and report upload progress updates.
+    ///   - progressHandler: Closure to handle and report download progress updates.
     init(
+        configuration: Configuration,
         requestMiddleware: @escaping Middleware,
         transport: HTTPTransport,
-        endpoint: Endpoint,
+        endpoint: any Endpoint,
         retryStrategy: RetryStrategy,
-        progressHandler: @escaping (Double) -> Void
+        progressHandler: @escaping @Sendable (Double) -> Void
     ) {
         self.progressHandler = progressHandler
 
-        super.init(requestMiddleware: requestMiddleware,
-                   transport: transport,
-                   endpoint: endpoint,
-                   retryStrategy: retryStrategy)
+        super.init(
+            configuration: configuration,
+            requestMiddleware: requestMiddleware,
+            transport: transport,
+            endpoint: endpoint,
+            retryStrategy: retryStrategy
+        )
     }
 
     override internal func requestData(_ urlRequest: URLRequest) async throws -> Response<Data> {

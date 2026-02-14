@@ -95,7 +95,7 @@ public struct RetryStrategy: Equatable, Sendable {
     }
 
     /// The default retry interval, set to 1 second.
-    public static let defaultRetryInterval: RetryInterval = .seconds(1) // 1 sec
+    public static let defaultRetryInterval: RetryInterval = .seconds(1)  // 1 sec
 }
 
 extension RetryStrategy: Sequence {

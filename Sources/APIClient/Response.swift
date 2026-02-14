@@ -56,8 +56,6 @@ public struct PaginationPayload<Element: Decodable & Sendable & PageElement>: De
         }
     }
 
-
-
     /// The array of elements representing the items in the current page.
     public var data: [Element]
 
@@ -65,7 +63,6 @@ public struct PaginationPayload<Element: Decodable & Sendable & PageElement>: De
 
     /// The total number of items across all pages.
     public var total: Int { return pagination.count }
-
 
     /// A Boolean value indicating whether there are more pages to retrieve.
     ///
@@ -76,6 +73,5 @@ public struct PaginationPayload<Element: Decodable & Sendable & PageElement>: De
     public var hasNextPage: Bool {
         pagination.hasMore
     }
-
 
 }

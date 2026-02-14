@@ -16,24 +16,25 @@ private enum Scheme: Sendable {
     static let https: String = "https"
 }
 
-/// A class for building `URLRequest` objects with various configuration options.
+/// A structure for building `URLRequest` objects from a configuration and endpoint.
 ///
-/// `RequestBuilder` is used to construct HTTP requests for a given base URL and endpoint.
-/// It supports adding custom user agent and authorization token,
-class RequestBuilder: @unchecked Sendable {
-    private var userAgent: String?
-    private var authToken: String?
+/// `RequestBuilder` constructs HTTP requests using the client's `Configuration`
+/// (base URL, encoder, timeout, headers, cache policy) and endpoint properties.
+struct RequestBuilder: Sendable {
 
-    /// Builds a `URLRequest` using the specified endpoint.
-    /// - Parameter endpoint: The endpoint defining the request path, method, query parameters, body, and headers.
-    /// - Returns: A configured `URLRequest` based on the endpoint's settings.
-    /// - Throws: An error if any value throws an error during building.
-    func build(using endpoint: Endpoint) throws(APIClientError) -> URLRequest {
-        return try build(using: endpoint.baseURL, endpoint: endpoint)
+    private let configuration: Configuration
+
+    init(configuration: Configuration) {
+        self.configuration = configuration
     }
-    
-    func build(using baseURL: URL, endpoint: Endpoint) throws(APIClientError) -> URLRequest {
-        let urlComponents = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+
+    /// Builds a `URLRequest` for the given endpoint using the client's configuration.
+    ///
+    /// - Parameter endpoint: The endpoint defining the request path, method, body, and headers.
+    /// - Returns: A configured `URLRequest`.
+    /// - Throws: An `APIClientError` if URL construction or encoding fails.
+    func build(for endpoint: any Endpoint) throws(APIClientError) -> URLRequest {
+        let urlComponents = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false)
 
         guard var components = urlComponents else {
             throw APIClientError.requestError(InternalRequestError.urlComponentsAreInvalid)
@@ -45,33 +46,25 @@ class RequestBuilder: @unchecked Sendable {
             throw APIClientError.requestError(InternalRequestError.urlComponentsAreInvalid)
         }
 
-        if #available(iOS 16.0, *) {
-            url.append(path: endpoint.path, directoryHint: .notDirectory)
-        } else {
-            url.appendPathComponent(endpoint.path, isDirectory: false)
-        }
-        
-        return try build(with: url, for: endpoint)
-    }
-    
-    func build(with url: URL, for endpoint: Endpoint) throws(APIClientError) -> URLRequest {
+        url.append(path: endpoint.path, directoryHint: .notDirectory)
+
         var request = URLRequest(url: url)
         request.httpMethod = endpoint.method.rawValue
+        request.timeoutInterval = configuration.timeoutInterval
+        request.cachePolicy = configuration.cachePolicy
 
         do {
-            request = try endpoint.httpData.encode(request)
+            request = try endpoint.httpData.encode(request, using: configuration.makeEncoder())
 
-            if let userAgent {
-                request.addValue(userAgent, forHTTPHeaderField: "User-Agent")
+            // Apply default headers from configuration
+            for (key, value) in configuration.defaultHeaders {
+                request.addValue(value, forHTTPHeaderField: key)
             }
 
-            if let authToken {
-                request.addValue(authToken, forHTTPHeaderField: "Authorization")
-            }
-
+            // Apply endpoint-specific headers (can override defaults)
             if let httpHeaderFields = endpoint.httpHeaderFields {
                 for (key, value) in httpHeaderFields {
-                    request.addValue(value, forHTTPHeaderField: key)
+                    request.setValue(value, forHTTPHeaderField: key)
                 }
             }
 
@@ -79,26 +72,5 @@ class RequestBuilder: @unchecked Sendable {
         } catch {
             throw APIClientError.encoderError(error)
         }
-    }
-}
-
-extension RequestBuilder {
-
-    /// Adds a user agent to the request.
-    /// - Parameter userAgent: The user agent to add.
-    /// - Returns: The current `RequestBuilder` instance for chaining.
-    func addUserAgent(_ userAgent: String?) -> RequestBuilder {
-        self.userAgent = userAgent
-
-        return self
-    }
-
-    /// Adds an authorization token to the request.
-    /// - Parameter authToken: The authorization token to add.
-    /// - Returns: The current `RequestBuilder` instance for chaining.
-    func addAuthToken(_ authToken: String?) -> RequestBuilder {
-        self.authToken = authToken
-
-        return self
     }
 }

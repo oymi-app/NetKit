@@ -5,13 +5,14 @@ import PackageDescription
 let package = Package(
     name: "NetKit",
     platforms: [
-        .iOS(.v15),
-        .macOS(.v13),
+        .iOS(.v18),
+        .macOS(.v15),
     ],
     products: [
         .library(
             name: "NetKit",
-            targets: ["NetKit"])
+            targets: ["NetKit"]
+        )
     ],
     dependencies: [
         .package(url: "https://github.com/tikhop/Logger.git", branch: "master")
@@ -34,6 +35,6 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("StrictConcurrency")
             ]
-        )
+        ),
     ]
 )

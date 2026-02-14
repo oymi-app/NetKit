@@ -27,9 +27,9 @@ jobs:
           xcrun simctl list devices
           xcodebuild -showsdks
       - name: Build
-        run: xcodebuild build -scheme Logger -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
+        run: xcodebuild build -scheme NetKit -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
       - name: Test
-        run: xcodebuild test -scheme TPInAppReceipt -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
+        run: xcodebuild test -scheme NetKit -destination 'platform=iOS Simulator,OS=latest,name=iPhone 17' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
 
   catalyst:
     name: Mac Catalyst (Build & Test)
@@ -37,6 +37,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build
-        run: xcodebuild build -scheme TPInAppReceipt -destination 'platform=macOS,variant=Mac Catalyst' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
+        run: xcodebuild build -scheme NetKit -destination 'platform=macOS,variant=Mac Catalyst' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
       - name: Test
-        run: xcodebuild test -scheme TPInAppReceipt -destination 'platform=macOS,variant=Mac Catalyst' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted
+        run: xcodebuild test -scheme NetKit -destination 'platform=macOS,variant=Mac Catalyst' -skipPackagePluginValidation SWIFT_STRICT_CONCURRENCY=targeted

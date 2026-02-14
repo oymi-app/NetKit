@@ -29,28 +29,42 @@ public class URLSessionTransport: HTTPTransport, @unchecked Sendable {
 
         return (data, res)
     }
-    
-    public func bytes(request: URLRequest) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
-        let (bytes, response) = try await urlSession.bytes(for: request)
 
-        guard let res = response as? HTTPURLResponse else {
+    public func bytes(request: URLRequest) async throws -> (AsyncThrowingStream<UInt8, any Error>, HTTPURLResponse) {
+        let (asyncBytes, response) = try await urlSession.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw APIClientError.transport(InternalTransportError.invalidResponse(response))
         }
 
-        return (bytes, res)
+        let stream = AsyncThrowingStream<UInt8, any Error> { continuation in
+            let task = Task {
+                do {
+                    for try await byte in asyncBytes {
+                        continuation.yield(byte)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
+        }
+
+        return (stream, httpResponse)
     }
 }
 
-public extension HTTPURLResponse {
-    var isHTTP5xxError: Bool {
-        (500 ... 599).contains(statusCode)
+extension HTTPURLResponse {
+    public var isHTTP5xxError: Bool {
+        (500...599).contains(statusCode)
     }
 }
 
-public extension URLError {
-    var isPossiblyServerIssue: Bool {
-        (code == .cannotConnectToHost ||
-         code == .networkConnectionLost ||
-         code == .secureConnectionFailed)
+extension URLError {
+    public var isPossiblyServerIssue: Bool {
+        (code == .cannotConnectToHost || code == .networkConnectionLost || code == .secureConnectionFailed)
     }
 }

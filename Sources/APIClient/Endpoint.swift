@@ -3,17 +3,11 @@ import Foundation
 /// Protocol representing an API endpoint.
 public protocol Endpoint: Sendable {
 
-    /// The base URL to be used for constructing requests.
-    var baseURL: URL { get }
-
     /// The path for the HTTP endpoint.
     var path: String { get }
 
     /// The HTTP method used for the endpoint.
     var method: HTTPMethod { get }
-
-    /// Indicates whether authorization is needed for the endpoint.
-    var isAuthorizationNeeded: Bool { get }
 
     /// The data to be sent with the HTTP request.
     var httpData: HTTPData { get }
@@ -25,54 +19,17 @@ public protocol Endpoint: Sendable {
     var retryStrategy: RetryStrategy { get }
 }
 
-public extension Endpoint {
-    var httpHeaderFields: [String: String]? {
+extension Endpoint {
+    public var httpHeaderFields: [String: String]? {
         return nil
     }
 
-    var retryStrategy: RetryStrategy {
+    public var retryStrategy: RetryStrategy {
         .default
     }
 }
 
-/// A type that represents an HTTP endpoint with a predefined base URL.
-///
-/// `URLEndpoint` is designed for use cases where the full URL is known in advance,
-/// such as accessing static files, resources hosted on a CDN, or third-party APIs with fixed URLs.
-/// By encapsulating the complete `URL`, this type simplifies endpoint configuration and usage.
-///
-/// `URLEndpoint` conforms to the `Endpoint` protocol, ensuring compatibility with
-/// existing systems or frameworks designed to work with `Endpoint` instances.
-public struct URLEndpoint: Endpoint {
-    public let baseURL: URL
-    public let path: String
-    public let method: HTTPMethod
-    public let isAuthorizationNeeded: Bool
-    public let httpData: HTTPData
-    public let httpHeaderFields: [String: String]?
-    public let retryStrategy: RetryStrategy
-
-    public let url: URL
-
-    public init(url: URL,
-                method: HTTPMethod = .GET,
-                isAuthorizationNeeded: Bool = true,
-                httpData: HTTPData = .plain,
-                httpHeaderFields: [String : String]? = nil,
-                retryStrategy: RetryStrategy = .default) throws {
-        self.url = url
-        self.baseURL = try url.hostUrl
-        self.path = url.curPath
-        self.method = method
-        self.isAuthorizationNeeded = isAuthorizationNeeded
-        self.httpData = httpData
-        self.httpHeaderFields = httpHeaderFields
-        self.retryStrategy = retryStrategy
-    }
-}
-
 /// Represents an HTTP data.
-@frozen
 public enum HTTPData: @unchecked Sendable {
 
     /// No data.
@@ -124,7 +81,7 @@ extension HTTPData {
             self.boundary = boundary
         }
 
-        public init (parameters: [String: Any], data: [Data], boundary: UUID = UUID()) {
+        public init(parameters: [String: Any], data: [Data], boundary: UUID = UUID()) {
             self.parameters = parameters
             self.data = data
             self.boundary = boundary
@@ -133,7 +90,7 @@ extension HTTPData {
 }
 
 extension HTTPData {
-    func encode(_ urlRequest: URLRequest) throws -> URLRequest {
+    func encode(_ urlRequest: URLRequest, using encoder: JSONEncoder) throws -> URLRequest {
         var urlRequest = urlRequest
 
         switch self {
@@ -145,10 +102,6 @@ extension HTTPData {
             if urlRequest.allHTTPHeaderFields?["Content-Type"] == nil {
                 urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
             }
-
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .secondsSince1970
-            encoder.outputFormatting = .sortedKeys
 
             urlRequest.httpBody = try encoder.encode(encodable)
         case .parameters(let parameters, let encoding):
@@ -168,7 +121,11 @@ extension HTTPData {
 
             for item in multipartFormData.data {
                 httpBody.append(Data("--\(boundary)\r\n".utf8))
-                httpBody.append(Data("Content-Disposition: form-data; name=\"\(item.name)\"; filename=\"\(item.fileName)\"\r\n".utf8))
+                httpBody.append(
+                    Data(
+                        "Content-Disposition: form-data; name=\"\(item.name)\"; filename=\"\(item.fileName)\"\r\n".utf8
+                    )
+                )
                 httpBody.append(Data("Content-Type: \(item.mimeType)\r\n\r\n".utf8))
                 httpBody.append(item.data)
                 httpBody.append(Data("\r\n".utf8))
@@ -312,40 +269,4 @@ extension CharacterSet {
 
         return CharacterSet.urlQueryAllowed.subtracting(encodableDelimiters)
     }()
-}
-
-fileprivate extension URL {
-    var curPath: String {
-        get {
-            if #available(iOS 16.0, *) {
-                return path(percentEncoded: false)
-            } else {
-                return path
-            }
-        }
-    }
-
-    var hostUrl: URL {
-        get throws {
-            let baseUrl: URL? = {
-                if #available(iOS 16.0, *) {
-                    if let host = host(percentEncoded: false) {
-                        return URL(string: host)
-                    }
-                } else {
-                    if let host {
-                        return URL(string: host)
-                    }
-                }
-
-                return nil
-            }()
-
-            if let baseUrl {
-                return baseUrl
-            } else {
-                throw APIClientError.requestError(InternalRequestError.urlComponentsAreInvalid)
-            }
-        }
-    }
 }

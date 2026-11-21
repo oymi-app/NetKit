@@ -65,7 +65,15 @@ extension APIClientError: LocalizedError {
         return false
     }
 
-    var isUnauthorizedError: Bool {
+    public var is400: Bool {
+        if case .responseError(let res, _) = self {
+            return res.statusCode == 400
+        }
+
+        return false
+    }
+
+    public var isUnauthorizedError: Bool {
         if case .responseError(let res, _) = self {
             return res.statusCode == 401
         }

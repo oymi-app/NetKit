@@ -40,7 +40,9 @@ struct RequestBuilder: Sendable {
             throw APIClientError.requestError(InternalRequestError.urlComponentsAreInvalid)
         }
 
-        components.scheme = Scheme.https
+        if components.scheme?.isEmpty ?? true {
+            components.scheme = Scheme.https
+        }
 
         guard var url = components.url else {
             throw APIClientError.requestError(InternalRequestError.urlComponentsAreInvalid)
